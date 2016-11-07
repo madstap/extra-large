@@ -13,16 +13,19 @@
 
 (def alphabet "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
-(s/def ::col
-  (s/with-gen (s/and simple-keyword? #(every? (set alphabet) (name %)))
-              (fn []
-                ;; Generated cols will fit into a Long
-                (->> (gen/vector (gen/char-alpha))
-                  (gen/such-that not-empty)
-                  (gen/fmap (util/fn->> (apply str) str/upper-case keyword))
-                  (gen/such-that #(< (col->int %) Long/MAX_VALUE))))))
+;; The total number of available columns is 16K (2^14)
+;; The total number of available rows is 1M (2^20)
+(def max-cols (int (Math/pow 2 14)))
+(def max-rows (int (Math/pow 2 20)))
 
-(s/def ::row pos-int?)
+(s/def ::col
+  (s/with-gen (s/and simple-keyword?
+                     #(every? (set alphabet) (name %))
+                     #(<= (col->int %) max-cols))
+              (fn []
+                (gen/fmap int->col (s/gen (s/int-in 1 (inc max-cols)))))))
+
+(s/def ::row (s/int-in 1 (inc max-rows)))
 
 (def ^:private alpha->int
   (zipmap alphabet (drop 1 (clojure.core/range))))
@@ -267,8 +270,8 @@
       (map int->col))))
 
 (s/def ::coords
-  (s/with-gen (s/and vector? (s/spec (s/cat :col ::col :row pos-int?)))
-    #(gen/tuple (s/gen ::col) (s/gen pos-int?))))
+  (s/with-gen (s/and vector? (s/spec (s/cat :col ::col :row ::row)))
+    #(gen/tuple (s/gen ::col) (s/gen ::row))))
 
 (s/def :range/by #{:row :col})
 
