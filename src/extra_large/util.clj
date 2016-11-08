@@ -67,6 +67,24 @@
    (let [[test expr & more] clauses]
      `(cond-doto (if ~test (doto ~x ~expr) ~x) ~@more))))
 
+(s/fdef definstance?
+  :args (s/cat :name-sym simple-symbol?
+               :docstring (s/? string?)
+               :meta (s/? map?)
+               :class any?))
+
+(defmacro definstance?
+  {:style/indent 1}
+  ([& args]
+   (let [{:keys [name-sym docstring meta class]}
+         (s/conform (:args (s/get-spec `definstance?)) args)]
+     `(do
+        (s/fdef ~name-sym :args (s/cat :x any?) :ret boolean?)
+        (defn ~name-sym ~@(cond-> []
+                            docstring (conj docstring)
+                            meta (conj meta)
+                            true (into [['x] `(instance? ~class ~'x)])))))))
+
 (comment
 
   (test/instrument)
