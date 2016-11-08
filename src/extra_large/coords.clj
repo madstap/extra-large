@@ -40,7 +40,7 @@
         (= col (int->col ret))))
 
 (s/fdef int->col
-  :args (s/cat :n pos-int?)
+  :args (s/cat :n (s/int-in 1 (inc max-cols)))
   :ret ::col
   :fn (fn [{:keys [ret] {n :n} :args}]
         (= n (col->int ret))))
@@ -66,17 +66,6 @@
         (recur (bigint (/ (- current this) 26))
                (conj ret (char (+ 64 this))))
         (->> ret (apply str) keyword)))))
-
-(comment
-  (s/exercise-fn `int->col)
-
-  (s/exercise-fn `col->int)
-
-  (test/check `int->col)
-
-  (test/check `col->int)
-  )
-
 
 (s/def ::col-or-int (s/or :col ::col :int nat-int?))
 
