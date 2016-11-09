@@ -65,9 +65,11 @@ Workbooks and sheets are the apache poi workbooks and sheets. They are mutable.
 #### Doing stuff with cells
 
 All of these can take either the same two args as `xl/get-sheet` or a sheet as the first args.
-In this case we already have a sheet selected.
 
-Get the value or the cell
+`xl/assoc!`, `xl/update!`, `xl/update-val!` and `xl/update-poi!` will all return the workbook or sheet passed as the first argument.
+
+
+##### Read cells
 
 ``` clojure
 ;; Get the value from the cell at A12
@@ -78,7 +80,7 @@ Get the value or the cell
 
 ```
 
-Write stuff to cells
+##### Write stuff to cells
 ``` clojure
 (xl/assoc! sales [:B 14] "bar")
 
@@ -91,7 +93,7 @@ Write stuff to cells
 (xl/get sales [:B 15]) ;;=> #::xl.cell{:value 1.0 :formula "2 - 1"}
 ```
 
-Update cells
+##### Update cells
 
 ``` clojure
 ;; update the value in a cell
