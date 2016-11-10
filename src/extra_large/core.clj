@@ -283,6 +283,39 @@
                :coords ::xl.coords/coords)
   :ret ::cell)
 
+(s/fdef parse-merged-region
+  :args (s/cat :s string?)
+  :ret ::coords-range)
+
+(defn parse-merged-region [s]
+  (->> (str/split s #":")
+    (map #(rest (re-find #"([A-Z]*)([[0-9]*])" %)))
+    (mapv (juxt (comp keyword first) (comp util/str->int second)))))
+
+(s/fdef sheet-merged-regions
+  :args (s/cat :sheet poi-sheet?)
+  :ret (s/coll-of ::coords-range :kind vector?))
+
+(defn sheet-merged-regions [^Sheet poi-sheet]
+  (mapv #(-> (.getMergedRegion poi-sheet %) .formatAsString parse-merged-region)
+        (range (.getNumMergedRegions poi-sheet))))
+
+(s/fdef find-merged-region
+  :args (s/cat :sheet poi-sheet?
+               :coords ::coords)
+  :ret (s/nilable (s/spec (s/cat :idx nat-int? :region ::coords-range))))
+
+(defn find-merged-region
+  "Returns a tuple of [idx merged],
+  where merged is the coords-range to which coords belongs,
+  and idx is it's index in the merged-regions of the sheet.
+  Returns nil if not found."
+  [^Sheet poi-sheet coords]
+  (reduce (fn [_ [idx merged-region]]
+            (when (contains? (set (apply xl.coords/range merged-region)) coords)
+              (reduced [idx merged-region])))
+          nil (util/indexed (sheet-merged-regions poi-sheet))))
+
 (defn get
   "Get the cell at coords."
   ([wb sheet coords]
@@ -294,14 +327,24 @@
                         ;; Throws exeption when the cell is not a formula cell
                         (catch java.lang.IllegalStateException _ nil))
 
+           [_ merged] (find-merged-region poi-sheet coords)
+
+           merged-key (when merged
+                        (if (= (first merged) coords)
+                          ::xl.cell/merged
+                          ::xl.cell/merged-by))
+
            v (doc/read-cell poi-cell)
 
            v (if (keyword? v)
                (s/assert :xl.cell/error (->kebab-case-keyword v :separator "_"))
                v)]
 
-       (-> #::xl.cell{:value v}
-         (util/?> formula (assoc ::xl.cell/formula formula)))))))
+       (cond-> #::xl.cell{:value v}
+               formula (assoc ::xl.cell/formula formula)
+               merged (assoc merged-key merged))))))
+
+
 
 (s/fdef get-val
   :args (s/cat :poi ::poi-args
