@@ -30,6 +30,8 @@
 
 (s/def ::coords ::xl.coords/coords)
 
+(s/def ::coords-range (s/tuple ::coords ::coords))
+
 (s/def ::cell
   (s/keys :opt [::xl.cell/value
                 ::xl.cell/formula]))
@@ -227,9 +229,6 @@
    (cond (poi-wb? poi) (.setForceFormulaRecalculation ^Workbook poi recalculate?)
          (poi-sheet? poi) (.setForceFormulaRecalculation ^Sheet poi recalculate?))
    poi))
-
-(s/def ::coords-range
-  (s/tuple ::coords ::coords))
 
 (s/fdef get-poi
   :args (s/cat :poi ::poi-args
