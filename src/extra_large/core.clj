@@ -30,9 +30,19 @@
 
 (s/def ::coords ::xl.coords/coords)
 
+(s/def ::coords-range ::xl.coords/coords-range)
+
+(defn valid-formula? [{::xl.cell/keys [formula value]}]
+  (let [[value-type _] (s/conform ::xl.cell/value value)]
+    ;; Can't have an error in a non formula cell...
+    (or (not= :error value-type) formula)))
+
 (s/def ::cell
-  (s/keys :opt [::xl.cell/value
-                ::xl.cell/formula]))
+  (s/and valid-formula?
+         (s/keys :opt [::xl.cell/value
+                       ::xl.cell/formula
+                       ::xl.cell/merged
+                       ::xl.cell/merged-by])))
 
 (def sheet-forbidden-chars (conj (set "[]/?*\\:") \u0000 \u0003))
 
@@ -228,9 +238,6 @@
          (poi-sheet? poi) (.setForceFormulaRecalculation ^Sheet poi recalculate?))
    poi))
 
-(s/def ::coords-range
-  (s/tuple ::coords ::coords))
-
 (s/fdef get-poi
   :args (s/cat :poi ::poi-args
                :coords ::xl.coords/coords)
@@ -279,10 +286,56 @@
   (apply f (get-poi! poi-sheet coords) args)
   poi-sheet)
 
+
+(s/fdef parse-merged-region
+  :args (s/cat :s string?)
+  :ret ::coords-range)
+
+(defn parse-merged-region [s]
+  (->> (str/split s #":")
+    (map #(rest (re-find #"([A-Z]*)([[0-9]*])" %)))
+    (mapv (juxt (comp keyword first) (comp util/str->int second)))))
+
+(s/fdef sheet-merged-regions
+  :args (s/cat :sheet poi-sheet?)
+  :ret (s/coll-of ::coords-range :kind vector?))
+
+(defn sheet-merged-regions [^Sheet poi-sheet]
+  (mapv #(-> (.getMergedRegion poi-sheet %) .formatAsString parse-merged-region)
+        (range (.getNumMergedRegions poi-sheet))))
+
+(s/fdef find-merged-region
+  :args (s/cat :sheet poi-sheet?
+               :coords ::coords)
+  :ret (s/nilable (s/spec (s/cat :idx nat-int? :region ::coords-range))))
+
+(defn find-merged-region
+  "Returns a tuple of [idx merged],
+  where merged is the coords-range to which coords belongs,
+  and idx is it's index in the merged-regions of the sheet.
+  Returns nil if not found."
+  [^Sheet poi-sheet coords]
+  (reduce (fn [_ [idx merged-region]]
+            (when (contains? (set (apply xl.coords/range merged-region)) coords)
+              (reduced [idx merged-region])))
+          nil (util/indexed (sheet-merged-regions poi-sheet))))
+
+(defn ->cell-range ^CellRangeAddress [coords-range]
+  (let [[cols rows] (apply map vector coords-range)
+        cols (map xl.coords/col->int cols)
+        [r1 r2 c1 c2] (map dec (concat rows cols))]
+    (CellRangeAddress. (min r1 r2) (max r1 r2) (min c1 c2) (max c1 c2))))
+
 (s/fdef get
   :args (s/cat :poi ::poi-args
-               :coords ::xl.coords/coords)
-  :ret ::cell)
+               :coords ::coords)
+  :ret ::cell
+  :fn (fn [{:keys [args ret]}]
+        (let [{::xl.cell/keys [merged merged-by]} ret
+              {:keys [coords]} args]
+          (cond merged (= coords (first merged))
+                merged-by (contains? (set (rest merged-by)) coords)
+                :else true))))
 
 (defn get
   "Get the cell at coords."
@@ -295,14 +348,24 @@
                         ;; Throws exeption when the cell is not a formula cell
                         (catch java.lang.IllegalStateException _ nil))
 
+           [_ merged] (find-merged-region poi-sheet coords)
+
+           merged-key (when merged
+                        (if (= (first merged) coords)
+                          ::xl.cell/merged
+                          ::xl.cell/merged-by))
+
            v (doc/read-cell poi-cell)
 
            v (if (keyword? v)
                (s/assert :xl.cell/error (->kebab-case-keyword v :separator "_"))
                v)]
 
-       (-> #::xl.cell{:value v}
-         (util/?> formula (assoc ::xl.cell/formula formula)))))))
+       (cond-> #::xl.cell{:value v}
+               formula (assoc ::xl.cell/formula formula)
+               merged (assoc merged-key merged))))))
+
+
 
 (s/fdef get-val
   :args (s/cat :poi ::poi-args
@@ -360,19 +423,49 @@
       ;; Is the formula evaluated automatically?
       formula (.setCellFormula formula))))
 
+(defn remove-all-overlapping-regions!
+  [^Sheet poi-sheet coord-range]
+  (let [new-merged (apply xl.coords/range coord-range)]
+    (reduce (fn [n-removed [idx merged-region]]
+              (if (some (set (apply xl.coords/range merged-region)) new-merged)
+                (do (.removeMergedRegion poi-sheet (- idx n-removed))
+                    (inc n-removed))
+                n-removed))
+            0
+            (util/indexed (sheet-merged-regions poi-sheet)))))
+
+(defn write-merged! [^Sheet poi-sheet merged]
+  (remove-all-overlapping-regions! poi-sheet merged)
+  (.addMergedRegion poi-sheet (->cell-range merged)))
+
 (defn write-cell!
   [^Sheet poi-sheet [col row] {::xl.cell/keys [value formula merged merged-by] :as cell}]
   (let [poi-cell (get-poi! poi-sheet [col row])
-        [value-type v] (s/conform ::xl.cell/value value)]
+        [value-type v] (s/conform ::xl.cell/value value)
+        mrgd (or merged merged-by)]
+
+    (when mrgd (write-merged! poi-sheet mrgd))
 
     (write-formula-and-val! poi-cell value formula)
 
     poi-sheet))
 
+
+(defn valid-merged-cell?
+  [coords {::xl.cell/keys [merged merged-by]}]
+  (cond merged (= coords (first merged))
+        merged-by (contains? (set (rest (apply xl.coords/range merged-by)))
+                             coords)
+        :else true))
+
 (s/fdef assoc!
-  :args (s/cat :poi ::poi-args
-               :coords ::xl.coords/coords
-               :cell ::cell-or-val)
+  :args (s/and (s/cat :poi ::poi-args
+                      :coords ::coords
+                      :cell ::cell-or-val)
+               (fn [{coords             :coords
+                     [cell-or-val cell] :cell}]
+                 (or (= :val cell-or-val)
+                     (valid-merged-cell? coords cell))))
   :ret (s/or :wb poi-wb? :sheet poi-sheet?))
 
 (defn assoc!

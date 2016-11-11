@@ -27,6 +27,10 @@
 
 (s/def ::row (s/int-in 1 (inc max-rows)))
 
+(s/def ::coords (s/tuple ::col ::row))
+
+(s/def ::coords-range (s/tuple ::coords ::coords))
+
 (def ^:private alpha->int
   (zipmap alphabet (drop 1 (clojure.core/range))))
 
@@ -257,10 +261,6 @@
       (apply clojure.core/range)
       (util/?>> (not (:start args*)) (drop 1))
       (map int->col))))
-
-(s/def ::coords
-  (s/with-gen (s/and vector? (s/spec (s/cat :col ::col :row ::row)))
-    #(gen/tuple (s/gen ::col) (s/gen ::row))))
 
 (s/def :range/by #{:row :col})
 
