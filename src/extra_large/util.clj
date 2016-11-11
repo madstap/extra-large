@@ -17,6 +17,11 @@
   [& forms]
   `(fn [x#] (->> x# ~@forms)))
 
+(defmacro fn-doto
+  "Same as #(doto % ~@forms)"
+  [& forms]
+  `(fn [x#] (doto x# ~@forms)))
+
 (defmacro ?>
   "Conditional single-arrow operation (-> m (?> add-kv? (assoc :k :v)))"
   [x test & forms]
