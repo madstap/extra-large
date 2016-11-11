@@ -22,6 +22,12 @@
       (xl/assoc! foo coords v)
       (= (xl/coerce-cell-val v) (xl/get-val foo coords)))))
 
+(deftest get-workbook-test
+  (xl/letsheets (xl/new-wb) [foo]
+    (is (= (xl/get-workbook wb)
+           (xl/get-workbook foo)
+           (xl/get-workbook (xl/get-poi! foo [:A 1]))))))
+
 (deftest merged-cells-overwrite-test
   (xl/letsheets (xl/new-wb) [foo]
     (xl/assoc! foo [:A 1] #::xl.cell{:merged [[:A 1] [:B 1]]})

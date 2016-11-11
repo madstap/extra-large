@@ -127,10 +127,26 @@
   (doc/load-workbook file-or-stream))
 
 (defn write-wb!
-  "Writes an excel workbook to a file or a stream.
+  "Writes a workbook or sheet to a file or a stream.
+  If given a sheet, will use the parent workbook.
   If it's a stream the caller must close the stream afterwards."
-  [wb file-or-stream]
-  (doc/save-workbook! file-or-stream wb))
+  [poi file-or-stream]
+  (let [wb (cond (poi-wb? poi) poi
+                 (poi-sheet? poi) (.getWorkbook ^Sheet poi))]
+    (doc/save-workbook! file-or-stream wb)))
+
+(defprotocol GetWorkbook
+  (get-workbook [poi]))
+
+(extend-protocol GetWorkbook
+  Workbook
+  (get-workbook [this] this)
+
+  Sheet
+  (get-workbook [^Sheet this] (.getWorkbook this))
+
+  Cell
+  (get-workbook [^Cell this] (.getWorkbook (.getSheet this))))
 
 (def docjure-errors
   #{:VALUE :DIV0 :CIRCULAR_REF :REF :NUM
