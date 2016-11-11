@@ -33,8 +33,7 @@
 
 (s/fdef juxtkeep
   :args (s/+ ifn?)
-  :ret (s/fspec :args (s/* any?)
-                :ret (s/and vector? (partial every? some?))))
+  :ret (s/fspec :ret (s/and vector? (partial every? some?))))
 
 (defn juxtkeep
   "Like juxt, but removes any nil values from the result."
