@@ -176,6 +176,8 @@
   :ret (s/nilable poi-sheet?))
 
 (defmulti get-sheet
+  "Finds a sheet in wb with either a sheet name, regex or sheet index.
+  Returns nil is not found."
   (fn [_poi-wb sheet]
     (first (s/conform :xl.get-sheet/sheet sheet))))
 
@@ -192,11 +194,13 @@
   [poi-wb sheet]
   (doc/select-sheet sheet poi-wb))
 
-(s/fdef get-or-create-sheet!
+(s/fdef get-sheet!
   :args (s/cat :wb poi-wb? :sheet-name ::sheet-name)
   :ret poi-sheet?)
 
-(defn get-or-create-sheet! [poi-wb sheet-name]
+(defn get-sheet!
+  "Finds a sheet in wb by sheet-name, creates the sheet if not found."
+  [poi-wb sheet-name]
   (or (get-sheet poi-wb sheet-name)
       (create-sheet! poi-wb sheet-name)))
 
@@ -219,6 +223,9 @@
                                           #(s/valid? ::sheet-name (name %))))))
                :body (s/* any?)))
 
+(defn- sheet-binding [sheet-sym]
+  `[~sheet-sym (get-sheet! ~'wb ~(name sheet-sym))])
+
 (defmacro letsheets
   "Takes a workbook and a vector of sheet-names as symbols,
   binds the workbook to wb and binds the supplied symbols
@@ -231,9 +238,7 @@
   {:style/indent 2}
   [wb sheet-names & body]
   `(let [~'wb ~wb
-         ~@(mapcat (fn [sheet-sym]
-                     `[~sheet-sym (get-or-create-sheet! ~'wb ~(name sheet-sym))])
-                   sheet-names)]
+         ~@(mapcat sheet-binding sheet-names)]
      ~@body))
 
 (s/def ::cell-or-val
@@ -256,7 +261,7 @@
 
 (s/fdef get-poi
   :args (s/cat :poi ::poi-args
-               :coords ::xl.coords/coords)
+               :coords ::coords)
   :ret (s/nilable poi-cell?))
 
 (defn get-poi
@@ -269,7 +274,7 @@
 
 (s/fdef get-poi!
   :args (s/cat :poi ::poi-args
-               :coords ::xl.coords/coords)
+               :coords ::coords)
   :ret poi-cell?)
 
 (defn get-poi!
@@ -289,19 +294,22 @@
   :ret (s/or :wb poi-wb?
              :sheet poi-sheet?))
 
-(defmulti update-poi! (fn [poi & _] (cond (poi-wb? poi) :wb
-                                          (poi-sheet? poi) :sheet)))
-
-(defmethod update-poi! :wb
-  ^Workbook [poi-wb sheet & args]
-  (apply update-poi! (get-sheet-safe poi-wb sheet) args)
-  poi-wb)
+(defmulti update-poi!
+  "Runs the function with the poi cell at coords as the first arg.
+  It presumably mutates the cell, the functions return value is ignored.
+  Returns the workbook or sheet passed as the first arg."
+  (fn [poi & _] (cond (poi-wb? poi) :wb
+                      (poi-sheet? poi) :sheet)))
 
 (defmethod update-poi! :sheet
   [poi-sheet coords f & args]
   (apply f (get-poi! poi-sheet coords) args)
   poi-sheet)
 
+(defmethod update-poi! :wb
+  ^Workbook [poi-wb sheet & args]
+  (apply update-poi! (get-sheet-safe poi-wb sheet) args)
+  poi-wb)
 
 (s/fdef parse-merged-region
   :args (s/cat :s string?)
@@ -377,15 +385,14 @@
                (s/assert :xl.cell/error (->kebab-case-keyword v :separator "_"))
                v)]
 
-       (cond-> #::xl.cell{:value v}
+       (cond-> {}
+               (not= ::xl.cell/merged-by merged-key) (assoc ::xl.cell/value v)
                formula (assoc ::xl.cell/formula formula)
                merged (assoc merged-key merged))))))
 
-
-
 (s/fdef get-val
   :args (s/cat :poi ::poi-args
-               :coords ::xl.coords/coords)
+               :coords ::coords)
   :ret ::xl.cell/value)
 
 (defn get-val
@@ -396,11 +403,11 @@
   ([poi-sheet coords]
    (::xl.cell/value (get poi-sheet coords))))
 
-(s/fdef write-error-to-cell!
-  :args (s/cat :cell poi-cell? :error ::xl.cell/error)
-  :ret poi-cell?)
-
-(defmulti coerce-cell-val (fn [value] (first (s/conform ::xl.cell/value value))))
+(defmulti coerce-cell-val
+  "Coerces a value to the representation used in excel.
+  Information can be lost in this process.
+  For example: (coerce-cell-val 1/3) => 0.3333333333333333"
+  (fn [value] (first (s/conform ::xl.cell/value value))))
 
 (defmethod coerce-cell-val :blank   [_] nil)
 (defmethod coerce-cell-val :num     [n] (double n))
@@ -409,23 +416,6 @@
 (defmethod coerce-cell-val :error   [e] (errors e))
 ;; TODO: What does excel do to dates.
 (defmethod coerce-cell-val :date    [d] d)
-
-(comment
-
-  (def formula-cell? (comp boolean ::xl.cell/formula))
-
-  (defn new-formula-evaluator ^XSSFFormulaEvaluator [^Cell poi-cell]
-    (.. poi-cell getSheet getWorkbook
-        getCreationHelper createFormulaEvaluator))
-
-  (def wb (new-wb))
-
-  (def foo (create-sheet! wb "foo"))
-
-  ;; The formula seems to be evaluated when I setCellformula...
-  (assoc! foo [:A 12] #::xl.cell{:formula "1 + 2"})
-
-  )
 
 (defn write-formula-and-val! [^Cell poi-cell value formula]
   (let [[value-type _] (s/conform ::xl.cell/value value)]
@@ -436,7 +426,7 @@
 
       (not formula) (doc/set-cell! (coerce-cell-val value))
 
-      ;; Is the formula evaluated automatically?
+      ;; This will evaluate the formula
       formula (.setCellFormula formula))))
 
 (defn remove-all-overlapping-regions!
@@ -545,17 +535,3 @@
                :args (s/* any?))
   :ret (s/or :wb poi-wb?
              :sheet poi-sheet?))
-
-(defn update-range!
-  "Updates a range of cells."
-  {:arglists '([poi-wb sheet coords-range f & args]
-               [poi-sheet coords-range f & args])}
-  ([& args]
-   (let [{:keys [poi f] :as args*} (s/conform (-> `update-range! s/get-spec :args) args)
-         coords (mapv (juxt :col :row) (:range args*))
-         poi-sheet (case (first poi)
-                     :sheet (first args)
-                     :wb (apply get-sheet-safe (take 2 args)))]
-     (doseq [coord (apply xl.coords/range coords)]
-       (apply update! poi-sheet coord f (:args args*)))
-     (first args))))

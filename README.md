@@ -44,7 +44,7 @@ Workbooks and sheets are the apache poi workbooks and sheets. They are mutable.
 
 ;; Get a sheet
 ;; The sheet arg can either be a sheet name, regex or an index (0-based)
-;; Will return zero when a sheet is not found,
+;; Will return nil when a sheet is not found,
 ;; there's also xl/get-sheet-safe which will throw.
 (def sales (xl/get-sheet wb  #"(?i)sales"))
 
