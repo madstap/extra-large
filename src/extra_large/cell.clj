@@ -1,6 +1,7 @@
 (ns extra-large.cell
   (:require
    [extra-large.util :as util]
+   [extra-large.coords :as xl.coords]
    [clojure.spec.gen :as gen]
    [clojure.spec :as s]))
 
@@ -35,3 +36,6 @@
   (s/and ::value (comp (partial not= :error) first)))
 
 (s/def ::formula string?)
+
+(s/def ::merged ::xl.coords/coords-range)
+(s/def ::merged-by ::xl.coords/coords-range)
