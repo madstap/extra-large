@@ -12,12 +12,6 @@
   (is (= (range 0 12 2)
          ((fn->> (take 11) (remove odd?)) (range 20)))))
 
-(deftest ?>-test
-  (is (= {:a 12} (-> {}
-                   (assoc :a 10)
-                   (?> (= 1 1) (update :a inc) (update :a inc))
-                   (?> false (assoc :C 20))))))
-
 (deftest ?>>-test
   (is (= (range 0 88 8)
          (->> (range 40)

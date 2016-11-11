@@ -22,13 +22,6 @@
   [& forms]
   `(fn [x#] (doto x# ~@forms)))
 
-(defmacro ?>
-  "Conditional single-arrow operation (-> m (?> add-kv? (assoc :k :v)))"
-  [x test & forms]
-  `(if ~test
-     (-> ~x ~@forms)
-     ~x))
-
 (defmacro ?>>
   "Conditional double-arrow operation (->> nums (?>> inc-all? (map inc)))"
   [test & forms]
