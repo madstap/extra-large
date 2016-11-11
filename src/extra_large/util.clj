@@ -49,12 +49,31 @@
 (defn str->int [x]
   (Integer/parseInt (str x)))
 
+(s/fdef indexed
+  :args (s/cat :coll (s/? seqable?))
+  :ret (s/or :transducer ifn?
+             :coll (s/coll-of (s/tuple nat-int? any?) :kind seq?))
+  :fn (fn [{:keys [ret args] :as x}]
+        (let [ret-type (first ret)]
+          (if (contains? args :coll)
+            (= :coll ret-type)
+            (= :transducer ret-type)))))
+
+(defn indexed
+  ([]
+   (fn [xf]
+     (let [i (volatile! -1)]
+       (fn
+         ([] (xf))
+         ([result] (xf result))
+         ([result input]
+          (xf result [(vswap! i inc) input]))))))
+  ([coll]
+   (map vector (range) coll)))
+
 (s/fdef cond-doto
   :args (s/cat :x any?
                :clauses (s/* (s/cat :test any? :expr any?))))
-
-(defn indexed [coll]
-  (map vector (range) coll))
 
 (defmacro cond-doto
   "Takes a presumably mutable x and zero or more clauses.
