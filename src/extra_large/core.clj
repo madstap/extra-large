@@ -59,7 +59,7 @@
              :ref                      FormulaError/REF
              :value                    FormulaError/VALUE})
 
-(assert (= (s/form ::xl.cell/error)) (set (keys errors)))
+(assert (= (s/form ::xl.cell/error) (set (keys errors))))
 
 (def cell-types {:blank   Cell/CELL_TYPE_BLANK
                  :num     Cell/CELL_TYPE_NUMERIC
