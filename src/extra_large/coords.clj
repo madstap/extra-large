@@ -175,6 +175,14 @@
   [& cols]
   (apply >= (map col->int cols)))
 
+(s/fdef col-sort
+  :args (s/cat :coll (s/coll-of ::col))
+  :ret (s/and (s/coll-of ::col :kind seq?)
+              (partial apply col<=)))
+
+(defn col-sort [coll]
+  (sort-by col->int coll))
+
 (s/def :row-range/inc? boolean?)
 
 (s/def :row-range/args
