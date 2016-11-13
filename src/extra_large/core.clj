@@ -116,32 +116,37 @@
   (or (get-cell poi-row col)
       (.createCell poi-row (dec (xl.coords/col->int col)))))
 
-(defn read-wb
+(s/fdef read
+  :args (s/cat :file-or-stream any?)
+  :ret poi-wb?)
+
+(defn read
   "Reads a workbook from a stream or a file."
   [file-or-stream]
   (doc/load-workbook file-or-stream))
 
-(defn write-wb!
-  "Writes a workbook or sheet to a file or a stream.
-  If given a sheet, will use the parent workbook.
-  If it's a stream the caller must close the stream afterwards."
-  [poi file-or-stream]
-  (let [wb (cond (poi-wb? poi) poi
-                 (poi-sheet? poi) (.getWorkbook ^Sheet poi))]
-    (doc/save-workbook! file-or-stream wb)))
+(defprotocol HasWorkbook
+  (get-workbook [poi] "Gets the parent workbook of a poi object."))
 
-(defprotocol GetWorkbook
-  (get-workbook [poi]))
-
-(extend-protocol GetWorkbook
+(extend-protocol HasWorkbook
   Workbook
   (get-workbook [this] this)
-
   Sheet
   (get-workbook [^Sheet this] (.getWorkbook this))
-
   Cell
   (get-workbook [^Cell this] (.getWorkbook (.getSheet this))))
+
+(defprotocol Writeable
+  (write! [poi file-or-stream]
+    "Writes a workbook or sheet to a file or a stream.
+  If passed a sheet, will use the parent workbook.
+  If passed a stream the caller must close the stream afterwards."))
+
+(extend-protocol Writeable
+  Workbook
+  (write! [this file-or-stream] (doc/save-workbook! file-or-stream this))
+  Sheet
+  (write! [this file-or-stream] (write! (get-workbook this) file-or-stream)))
 
 (def docjure-errors
   #{:VALUE :DIV0 :CIRCULAR_REF :REF :NUM
@@ -232,7 +237,7 @@
   (letsheets! (xl/read-wb \"foo.xlsx\") [sales expenses profit]
     (xl/assoc! profit [:A 15] (- (apply + (xl/get-val sales [[:C 2] [:C 59]]))
                                  (apply + (xl/get-val expenses [[:C 2] [:C 45]]))))
-    (xl/write-wb! wb \"bar.xlsx\")))"
+    (xl/write! wb \"bar.xlsx\")))"
   {:style/indent 2}
   [wb sheet-names & body]
   `(let [~'wb ~wb
