@@ -44,11 +44,6 @@
                        ::xl.cell/merged
                        ::xl.cell/merged-by])))
 
-(def sheet-forbidden-chars (conj (set "[]/?*\\:") \u0000 \u0003))
-
-(s/def ::sheet-name
-  (s/and string? (partial every? (complement sheet-forbidden-chars))))
-
 (def errors {:circular-ref             FormulaError/CIRCULAR_REF
              :div0                     FormulaError/DIV0
              :function-not-implemented FormulaError/FUNCTION_NOT_IMPLEMENTED
@@ -59,7 +54,7 @@
              :ref                      FormulaError/REF
              :value                    FormulaError/VALUE})
 
-(assert (= (s/form ::xl.cell/error)) (set (keys errors)))
+(assert (= (s/form ::xl.cell/error) (set (keys errors))))
 
 (def cell-types {:blank   Cell/CELL_TYPE_BLANK
                  :num     Cell/CELL_TYPE_NUMERIC
@@ -152,34 +147,37 @@
   #{:VALUE :DIV0 :CIRCULAR_REF :REF :NUM
     :NULL :FUNCTION_NOT_IMPLEMENTED :NAME :NA})
 
-(s/def :xl.get-sheet/sheet
-  (s/or :name string?
-        :regex regex?
-        :index nat-int?))
+(def sheet-forbidden-chars (conj (set "[]/?*\\:") \u0000 \u0003))
 
-(s/def ::poi-args
-  (s/alt :wb (s/cat :wb poi-wb?
-                    :sheet (s/or :str string?
-                                 :regex regex?
-                                 :index nat-int?))
-         :sheet poi-sheet?))
+(s/def ::sheet-name
+  (s/and string? (partial every? (complement sheet-forbidden-chars))))
 
-(s/fdef create-sheet
+(s/fdef create-sheet!
   :args (s/cat :wb poi-wb?, :name ::sheet-name)
   :ret poi-sheet?)
 
 (defn create-sheet! [^Workbook poi-wb name]
   (.createSheet poi-wb name))
 
+(s/def ::sheet-search
+  (s/or :name ::sheet-name
+        :regex regex?
+        :index nat-int?))
+
+(s/def ::get-sheet-args
+  (s/cat :wb poi-wb?
+         :sheet ::sheet-search))
+
 (s/fdef get-sheet
-  :args ::poi-args
+  :args ::get-sheet-args
   :ret (s/nilable poi-sheet?))
 
 (defmulti get-sheet
   "Finds a sheet in wb with either a sheet name, regex or sheet index.
   Returns nil is not found."
-  (fn [_poi-wb sheet]
-    (first (s/conform :xl.get-sheet/sheet sheet))))
+  {:arglists '([poi-wb sheet])}
+  (fn [_ sheet]
+    (first (s/conform ::sheet-search sheet))))
 
 (defmethod get-sheet :index
   [poi-wb sheet]
@@ -205,7 +203,7 @@
       (create-sheet! poi-wb sheet-name)))
 
 (s/fdef get-sheet-safe
-  :args ::poi-args
+  :args ::get-sheet-args
   :ret poi-sheet?)
 
 (defn get-sheet-safe
@@ -214,7 +212,7 @@
   (or (get-sheet poi-wb sheet)
       (throw (IllegalArgumentException. "Sheet not found"))))
 
-(s/fdef letsheets
+(s/fdef letsheets!
   :args (s/cat :wb any?
                :sheet-names
                (s/and vector?
@@ -226,20 +224,32 @@
 (defn- sheet-binding [sheet-sym]
   `[~sheet-sym (get-sheet! ~'wb ~(name sheet-sym))])
 
-(defmacro letsheets
+(defmacro letsheets!
   "Takes a workbook and a vector of sheet-names as symbols,
   binds the workbook to wb and binds the supplied symbols
   to the sheets they name (creates new sheets if no sheet found).
 
-  (letsheets (xl/read-wb \"foo.xlsx\") [sales expenses profit]
-    (xl/assoc! profit [:A 15] (- (xl/get-val sales [:C 59])
-                                 (xl/get-val expenses [:C 45])))
+  (letsheets! (xl/read-wb \"foo.xlsx\") [sales expenses profit]
+    (xl/assoc! profit [:A 15] (- (apply + (xl/get-val sales [[:C 2] [:C 59]]))
+                                 (apply + (xl/get-val expenses [[:C 2] [:C 45]]))))
     (xl/write-wb! wb \"bar.xlsx\")))"
   {:style/indent 2}
   [wb sheet-names & body]
   `(let [~'wb ~wb
          ~@(mapcat sheet-binding sheet-names)]
      ~@body))
+
+(s/fdef cols-and-rows
+  :args (s/cat :range ::coords-range)
+  :ret (s/tuple (s/and (s/coll-of ::xl.coords/col)
+                       (partial apply xl.coords/col<=))
+                (s/and (s/coll-of ::xl.coords/row)
+                       (partial apply <=))))
+
+(defn cols-and-rows
+  [coords-range]
+  (let [[cols rows] (apply map vector coords-range)]
+    [(xl.coords/col-sort cols) (sort rows)]))
 
 (s/def ::cell-or-val
   (s/or :val ::xl.cell/value
@@ -259,36 +269,100 @@
          (poi-sheet? poi) (.setForceFormulaRecalculation ^Sheet poi recalculate?))
    poi))
 
+(s/def ::poi-args
+  (s/alt :wb ::get-sheet-args
+         :sheet poi-sheet?))
+
+(s/def ::coords-args
+  (s/or :coords ::coords
+        :range ::coords-range))
+
+(s/def ::poi-and-coords-args
+  (s/cat :poi ::poi-args
+         :coords ::coords-args
+         :more (s/* any?)))
+
+(s/fdef cell-fn-dispatch
+  :args ::poi-and-coords-args
+  :ret #{:wb [:sheet :coords] [:sheet :range]})
+
+(defn cell-fn-dispatch [& args]
+  (let [{:keys [poi coords]} (s/conform ::poi-and-coords-args args)]
+    (case (first poi)
+      :wb :wb
+      :sheet [:sheet (first coords)])))
+
 (s/fdef get-poi
   :args (s/cat :poi ::poi-args
-               :coords ::coords)
+               :coords ::coords-args)
   :ret (s/nilable poi-cell?))
 
-(defn get-poi
-  "Get the poi cell at coords."
-  ([poi-wb sheet coords]
-   (get-poi (get-sheet-safe poi-wb sheet) coords))
-  (^Cell [^Sheet poi-sheet [col row]]
-   (when-let [poi-row (get-row poi-sheet row)]
-     (get-cell poi-row col))))
+(defmulti get-poi
+  "Get the poi cell at coords, or nil if no cell found.
+  If called with a range, will return a lazy sequence of cells,
+  with nils where no cells found."
+  {:arglists '([poi-wb sheet coords cell-or-val]
+               [poi-sheet coords cell-or-val])}
+  cell-fn-dispatch)
+
+(defmethod get-poi :wb
+  [poi-wb sheet & args]
+  (apply get-poi (get-sheet-safe poi-wb sheet) args))
+
+(defmethod get-poi [:sheet :coords]
+  ^Cell [poi-sheet [col row]]
+  (when-let [poi-row (get-row poi-sheet row)]
+    (get-cell poi-row col)))
+
+(defmethod get-poi [:sheet :range]
+  [poi-sheet coords-range]
+  (let [[cols rows] (cols-and-rows coords-range)]
+
+    (for [row (apply xl.coords/row-range rows)
+          :let [poi-row (get-row poi-sheet row)]
+
+          col (apply xl.coords/col-range cols)
+          :let [poi-cell (and poi-row (get-cell poi-row col))]]
+
+      poi-cell)))
 
 (s/fdef get-poi!
   :args (s/cat :poi ::poi-args
-               :coords ::coords)
+               :coords ::coords-args)
   :ret poi-cell?)
 
-(defn get-poi!
-  "Get the poi cell at coords."
-  ([poi-wb sheet coords]
-   (get-poi (get-sheet-safe poi-wb sheet) coords))
-  (^Cell [^Sheet poi-sheet [col row]]
-   (-> poi-sheet
-     (get-or-create-row! row)
-     (get-or-create-cell! col))))
+(defmulti get-poi!
+  "Get the poi cell at coords, will create the cell if no cell found.
+  If called with a range, will return an _eager_ sequence of cells."
+  {:arglists '([poi-wb sheet coords cell-or-val]
+               [poi-sheet coords cell-or-val])}
+  cell-fn-dispatch)
+
+(defmethod get-poi! :wb
+  [poi-wb sheet & args]
+  (apply get-poi! (get-sheet-safe poi-wb sheet) args))
+
+(defmethod get-poi! [:sheet :coords]
+  ^Cell [poi-sheet [col row]]
+  (-> poi-sheet
+    (get-or-create-row! row)
+    (get-or-create-cell! col)))
+
+(defmethod get-poi! [:sheet :range]
+  [poi-sheet coords-range]
+  (let [[cols rows] (cols-and-rows coords-range)]
+    ;; Should this be lazy?
+    (doall
+     (for [row (apply xl.coords/row-range rows)
+           :let [poi-row (get-or-create-row! poi-sheet row)]
+
+           col (apply xl.coords/col-range cols)
+           :let [poi-cell (get-or-create-cell! poi-row col)]]
+       poi-cell))))
 
 (s/fdef update-poi!
   :args (s/cat :poi ::poi-args
-               :coords ::coords
+               :coords ::coords-args
                :f ifn?
                :args (s/* any?))
   :ret (s/or :wb poi-wb?
@@ -297,19 +371,26 @@
 (defmulti update-poi!
   "Runs the function with the poi cell at coords as the first arg.
   It presumably mutates the cell, the functions return value is ignored.
+  When passed a range, maps the function over each cell.
   Returns the workbook or sheet passed as the first arg."
-  (fn [poi & _] (cond (poi-wb? poi) :wb
-                      (poi-sheet? poi) :sheet)))
+  {:arglists '([poi-wb sheet coords f & args]
+               [poi-sheet coords f & args])}
+  cell-fn-dispatch)
 
-(defmethod update-poi! :sheet
-  [poi-sheet coords f & args]
+(defmethod update-poi! :wb
+  [poi-wb sheet & args]
+  (apply update-poi! (get-sheet-safe poi-wb sheet) args)
+  poi-wb)
+
+(defmethod update-poi! [:sheet :coords]
+  ^Sheet [poi-sheet coords f & args]
   (apply f (get-poi! poi-sheet coords) args)
   poi-sheet)
 
-(defmethod update-poi! :wb
-  ^Workbook [poi-wb sheet & args]
-  (apply update-poi! (get-sheet-safe poi-wb sheet) args)
-  poi-wb)
+(defmethod update-poi! [:sheet :range]
+  ^Sheet [poi-sheet coords-range f & args]
+  (run! #(apply f % args) (get-poi! poi-sheet coords-range))
+  poi-sheet)
 
 (s/fdef parse-merged-region
   :args (s/cat :s string?)
@@ -352,7 +433,7 @@
 
 (s/fdef get
   :args (s/cat :poi ::poi-args
-               :coords ::coords)
+               :coords ::coords-args)
   :ret ::cell
   :fn (fn [{:keys [args ret]}]
         (let [{::xl.cell/keys [merged merged-by]} ret
@@ -361,47 +442,68 @@
                 merged-by (contains? (set (rest merged-by)) coords)
                 :else true))))
 
-(defn get
-  "Get the cell at coords."
-  ([wb sheet coords]
-   (get (get-sheet-safe wb sheet) coords))
-  ([^Sheet poi-sheet coords]
-   (when-let [poi-cell (get-poi! poi-sheet coords)]
+(defmulti get
+  "Get the cell at coords. If passed a range, returns a lazy seq of cells."
+  {:arglists '([poi-wb sheet coords]
+               [poi-sheet coords])}
+  cell-fn-dispatch)
 
-     (let [formula (try (.getCellFormula poi-cell)
-                        ;; Throws exeption when the cell is not a formula cell
-                        (catch java.lang.IllegalStateException _ nil))
+(defmethod get :wb
+  [poi-wb sheet & args]
+  (apply get (get-sheet-safe poi-wb sheet) args))
 
-           [_ merged] (find-merged-region poi-sheet coords)
+(defmethod get [:sheet :coords]
+  [^Sheet poi-sheet coords]
+  (when-let [poi-cell (get-poi! poi-sheet coords)]
+    (let [formula (try (.getCellFormula ^Cell poi-cell)
+                       ;; Throws exeption when the cell is not a formula cell
+                       (catch java.lang.IllegalStateException _ nil))
 
-           merged-key (when merged
-                        (if (= (first merged) coords)
-                          ::xl.cell/merged
-                          ::xl.cell/merged-by))
+          [_ merged] (find-merged-region poi-sheet coords)
 
-           v (doc/read-cell poi-cell)
+          merged-key (when merged
+                       (if (= (first merged) coords)
+                         ::xl.cell/merged
+                         ::xl.cell/merged-by))
 
-           v (if (keyword? v)
-               (s/assert :xl.cell/error (->kebab-case-keyword v :separator "_"))
-               v)]
+          v (doc/read-cell poi-cell)
 
-       (cond-> {}
-               (not= ::xl.cell/merged-by merged-key) (assoc ::xl.cell/value v)
-               formula (assoc ::xl.cell/formula formula)
-               merged (assoc merged-key merged))))))
+          v (if (keyword? v)
+              (s/assert :xl.cell/error (->kebab-case-keyword v :separator "_"))
+              v)]
+
+      (cond-> {}
+        (not= ::xl.cell/merged-by merged-key) (assoc ::xl.cell/value v)
+        formula (assoc ::xl.cell/formula formula)
+        merged (assoc merged-key merged)))))
+
+(defmethod get [:sheet :range]
+  [poi-sheet coords-range]
+  (map (partial get poi-sheet) (apply xl.coords/range coords-range)))
 
 (s/fdef get-val
   :args (s/cat :poi ::poi-args
                :coords ::coords)
   :ret ::xl.cell/value)
 
-(defn get-val
-  "Get the :xl.cell/value of the cell(s) at coords"
-  ;; OPTIMIZE:
-  ([poi-wb sheet coords]
-   (::xl.cell/value (get poi-wb sheet coords)))
-  ([poi-sheet coords]
-   (::xl.cell/value (get poi-sheet coords))))
+(defmulti get-val
+  "Get the value at coords.
+  Returns a lazy sequence when provided a range."
+  {:arglists '([poi-wb sheet coords]
+               [poi-sheet coords])}
+  cell-fn-dispatch)
+
+(defmethod get-val :wb
+  [poi-wb sheet & args]
+  (apply get-val (get-sheet-safe poi-wb sheet) args))
+
+(defmethod get-val [:sheet :coords]
+  [poi-sheet coords]
+  (::xl.cell/value (get poi-sheet coords)))
+
+(defmethod get-val [:sheet :range]
+  [poi-sheet coords-range]
+  (map ::xl.cell/value (get poi-sheet coords-range)))
 
 (defmulti coerce-cell-val
   "Coerces a value to the representation used in excel.
@@ -466,45 +568,76 @@
 
 (s/fdef assoc!
   :args (s/and (s/cat :poi ::poi-args
-                      :coords ::coords
+                      :coords ::coords-args
                       :cell ::cell-or-val)
-               (fn [{coords             :coords
-                     [cell-or-val cell] :cell}]
-                 (or (= :val cell-or-val)
-                     (valid-merged-cell? coords cell))))
+               (fn [{[coords-or-range coords] :coords
+                     [cell-or-val cell]       :cell}]
+                 (and (case coords-or-range
+                        :coords true
+                        :range
+                        (not
+                         ((some-fn ::xl.cell/merged ::xl.cell/merged-by) cell)))
+                      (case cell-or-val
+                        :val true
+                        :cell (valid-merged-cell? coords cell)))))
   :ret (s/or :wb poi-wb? :sheet poi-sheet?))
 
-(defn assoc!
-  "Associates a value to a cell in the sheet."
-  ([poi-wb sheet coords cell]
-   (do (assoc! (get-sheet-safe poi-wb sheet) coords cell)
-       poi-wb))
-  ([^Sheet poi-sheet coords cell]
-   (let [[value-type _] (s/conform ::cell-or-val cell)]
-     (write-cell! poi-sheet coords (if (= :val value-type)
-                                     #::xl.cell{:value cell} cell)))))
+(defmulti assoc!
+  "Associates a value or cell to the sheet at coords."
+  {:arglists '([poi-wb sheet coords cell-or-val]
+               [poi-sheet coords cell-or-val])}
+  cell-fn-dispatch)
+
+(defmethod assoc! :wb
+  [poi-wb sheet & args]
+  (apply assoc! (get-sheet-safe poi-wb sheet) args)
+  poi-wb)
+
+(defmethod assoc! [:sheet :coords]
+  [poi-sheet coords cell]
+  (let [[value-type _] (s/conform ::cell-or-val cell)]
+    (write-cell! poi-sheet coords (if (= :val value-type)
+                                    #::xl.cell{:value cell} cell))
+    poi-sheet))
+
+(defmethod assoc! [:sheet :range]
+  [poi-sheet coords-range cell]
+  (doseq [coords (apply xl.coords/range coords-range)]
+    (assoc! poi-sheet coords cell))
+  poi-sheet)
 
 (s/fdef update-val!
   :args (s/cat :poi ::poi-args
-               :coords ::xl.coords/coords
+               :coords ::coords-args
                :f ifn?
                :args (s/* any?))
   :ret (s/or :wb poi-wb?
              :sheet poi-sheet?))
 
-(defn update-val!
+(defmulti update-val!
   "Takes a a function that takes a ::xl.cell/value and
   replaces the cell with it's return value, which can be either a
   ::xl.cell/value or a ::xl/cell."
   {:arglists '([poi-wb sheet coords f & args]
                [poi-sheet coords f & args])}
-  [& args]
-  (let [{:keys [poi coords f] :as args*} (s/conform (-> `update! s/get-spec :args) args)
-        coords ((juxt :col :row) coords)
-        poi-sheet (case (first poi)
-                    :sheet (second poi)
-                    :wb (apply get-sheet-safe (take 2 args)))]
-    (assoc! poi-sheet coords (apply f (get-val poi-sheet coords) (:args args*)))))
+  cell-fn-dispatch)
+
+(defmethod update-val! :wb
+  [poi-wb sheet & args]
+  (apply update-val! (get-sheet-safe poi-wb sheet) args)
+  poi-wb)
+
+(defmethod update-val! [:sheet :coords]
+  [poi-sheet coords f & args]
+  (assoc! poi-sheet coords (apply f (get-val poi-sheet coords) args))
+  poi-sheet)
+
+(defmethod update-val! [:sheet :range]
+  [poi-sheet coords-range f & args]
+  (run! (fn [coords]
+          (apply update-val! poi-sheet coords f args))
+        (apply xl.coords/range coords-range))
+  poi-sheet)
 
 (s/fdef update!
   :args (s/cat :poi ::poi-args
@@ -514,24 +647,27 @@
   :ret (s/or :wb poi-wb?
              :sheet poi-sheet?))
 
-(defn update!
+(defmulti update!
   "Takes a a function that takes a ::xl/cell and
   replaces the cell with it's return value, which can be either a
   ::xl.cell/value or a ::xl/cell."
   {:arglists '([poi-wb sheet coords f & args]
                [poi-sheet coords f & args])}
-  [& args]
-  (let [{:keys [poi coords f] :as args*} (s/conform (-> `update! s/get-spec :args) args)
-        coords ((juxt :col :row) coords)
-        poi-sheet (case (first poi)
-                    :sheet (second poi)
-                    :wb (apply get-sheet-safe (take 2 args)))]
-    (assoc! poi-sheet coords (apply f (get poi-sheet coords) (:args args*)))))
+  cell-fn-dispatch)
 
-(s/fdef update-range!
-  :args (s/cat :poi ::poi-args
-               :range ::coords-range
-               :f ifn?
-               :args (s/* any?))
-  :ret (s/or :wb poi-wb?
-             :sheet poi-sheet?))
+(defmethod update! :wb
+  [poi-wb sheet & args]
+  (apply update! (get-sheet-safe poi-wb sheet) args)
+  poi-wb)
+
+(defmethod update! [:sheet :coords]
+  [poi-sheet coords f & args]
+  (assoc! poi-sheet coords (apply f (get poi-sheet coords) args))
+  poi-sheet)
+
+(defmethod update! [:sheet :range]
+  [poi-sheet coords-range f & args]
+  (run! (fn [coords]
+          (apply update! poi-sheet coords f args))
+        (apply xl.coords/range coords-range))
+  poi-sheet)
