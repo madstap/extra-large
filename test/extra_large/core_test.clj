@@ -40,8 +40,8 @@
 
     (testing "Overwrites former merged regions"
       (is (= [[:B 1] [:C 1]] (::xl.cell/merged (xl/get foo [:B 1]))))
-      (is (every? nil? (::xl.cell/merged [(xl/get foo [:A 1])
-                                          (xl/get foo [:C 1])]))))))
+      (is (every? nil? (map ::xl.cell/merged [(xl/get foo [:A 1])
+                                              (xl/get foo [:C 1])]))))))
 
 (deftest merged-cells-validation-test
   (xl/letsheets! (xl/new-wb) [foo]
