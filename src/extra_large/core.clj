@@ -214,7 +214,7 @@
   (or (get-sheet poi-wb sheet)
       (throw (IllegalArgumentException. "Sheet not found"))))
 
-(s/fdef letsheets
+(s/fdef letsheets!
   :args (s/cat :wb any?
                :sheet-names
                (s/and vector?
@@ -226,14 +226,14 @@
 (defn- sheet-binding [sheet-sym]
   `[~sheet-sym (get-sheet! ~'wb ~(name sheet-sym))])
 
-(defmacro letsheets
+(defmacro letsheets!
   "Takes a workbook and a vector of sheet-names as symbols,
   binds the workbook to wb and binds the supplied symbols
   to the sheets they name (creates new sheets if no sheet found).
 
-  (letsheets (xl/read-wb \"foo.xlsx\") [sales expenses profit]
-    (xl/assoc! profit [:A 15] (- (xl/get-val sales [:C 59])
-                                 (xl/get-val expenses [:C 45])))
+  (letsheets! (xl/read-wb \"foo.xlsx\") [sales expenses profit]
+    (xl/assoc! profit [:A 15] (- (apply + (xl/get-val sales [[:C 2] [:C 59]]))
+                                 (apply + (xl/get-val expenses [[:C 2] [:C 45]]))))
     (xl/write-wb! wb \"bar.xlsx\")))"
   {:style/indent 2}
   [wb sheet-names & body]

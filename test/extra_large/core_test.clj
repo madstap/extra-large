@@ -18,18 +18,18 @@
                      ;; TODO: How should dates work?
                      (s/gen ::xl.cell/non-error-value))
                  coords (s/gen ::xl/coords)]
-    (xl/letsheets (xl/new-wb) [foo]
+    (xl/letsheets! (xl/new-wb) [foo]
       (xl/assoc! foo coords v)
       (= (xl/coerce-cell-val v) (xl/get-val foo coords)))))
 
 (deftest get-workbook-test
-  (xl/letsheets (xl/new-wb) [foo]
+  (xl/letsheets! (xl/new-wb) [foo]
     (is (= (xl/get-workbook wb)
            (xl/get-workbook foo)
            (xl/get-workbook (xl/get-poi! foo [:A 1]))))))
 
 (deftest merged-cells-overwrite-test
-  (xl/letsheets (xl/new-wb) [foo]
+  (xl/letsheets! (xl/new-wb) [foo]
     (xl/assoc! foo [:A 1] #::xl.cell{:merged [[:A 1] [:B 1]]})
     (xl/assoc! foo [:C 1] #::xl.cell{:merged [[:C 1] [:D 1]]})
 
@@ -44,7 +44,7 @@
                                           (xl/get foo [:C 1])]))))))
 
 (deftest merged-cells-validation-test
-  (xl/letsheets (xl/new-wb) [foo]
+  (xl/letsheets! (xl/new-wb) [foo]
     (testing "Can only merge the current cell"
       (is (thrown? clojure.lang.ExceptionInfo
                    (xl/assoc! foo [:A 1] #::xl.cell{:merged [[:B 1] [:C 1]]}))))
@@ -68,7 +68,9 @@
              (::xl.cell/merged-by (xl/get foo [:B 1])))))))
 
 (deftest a-formula-is-evaluated
-  (xl/letsheets (xl/new-wb) [foo]
+  (xl/letsheets! (xl/new-wb) [foo]
     (is (= #::xl.cell{:value 3.0 :formula "1 + 2"}
-           (do (xl/assoc! foo [:A 1] #::xl.cell{:formula "1 + 2"})
-               (xl/get foo [:A 1]))))))
+           (-> foo
+             (xl/assoc! [:A 1] #::xl.cell{:formula "1 + 2"})
+             (xl/get [:A 1]))))))
+
