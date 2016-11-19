@@ -9,7 +9,7 @@ I suggest using [docjure](https://github.com/mjul/docjure) for anything importan
 
 ## Usage
 
-#### Deps
+### Deps
 
 Requires clojure 1.9.0 which is currently `[org.clojure/clojure "1.9.0-alpha14"]`.
 
@@ -30,10 +30,11 @@ In your namespace
    [extra-large.coords :as xl.coords]))
 ```
 
-#### Use
+### Use
 
+#### Workbooks and sheets
 
-Workbooks and sheets are the apache poi workbooks and sheets. They are mutable.
+Workbooks and sheets are apache poi workbooks and sheets. They are mutable.
 
 ```clojure
 ;; Read a workbook from a file (or stream)
@@ -90,7 +91,7 @@ means that they'll be applied to each of the cells in the range in turn (by row)
 When given a range, there's a `:by` keyword argument that can be either `:row`(default) or `:col`.
 The cells are returned in a two dimensional vector.
 
-##### Read cells
+#### Read cells
 
 ``` clojure
 ;; Get the value from the cell at A12
@@ -101,7 +102,7 @@ The cells are returned in a two dimensional vector.
 
 ```
 
-##### Write stuff to cells
+#### Write stuff to cells
 ``` clojure
 (xl/assoc! sales [:B 14] "bar")
 
@@ -114,7 +115,7 @@ The cells are returned in a two dimensional vector.
 (xl/get sales [:B 15]) ;;=> #::xl.cell{:value 1.0 :formula "2 - 1"}
 ```
 
-##### Update cells
+#### Update cells
 
 ``` clojure
 ;; update the value in a cell
@@ -146,7 +147,7 @@ There are also more low-level functions to work directly with apache poi cells.
 (update-poi! sales [:F 4] (fn [c] (.removeCellcomment c)))
 ```
 
-##### Calling the functions with ranges
+#### Calling the functions with ranges
 
 ``` clojure
 ;; To demonstrate I set the cell values to the string representation of their coords.
