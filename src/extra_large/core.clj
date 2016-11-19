@@ -417,21 +417,12 @@
   (run! #(apply f % args) (get-poi! poi-sheet coords-range))
   poi-sheet)
 
-(s/fdef parse-merged-region
-  :args (s/cat :s string?)
-  :ret ::coords-range)
-
-(defn parse-merged-region [s]
-  (->> (str/split s #":")
-    (map #(rest (re-find #"([A-Z]*)([[0-9]*])" %)))
-    (mapv (juxt (comp keyword first) (comp util/str->int second)))))
-
 (s/fdef sheet-merged-regions
   :args (s/cat :sheet poi-sheet?)
   :ret (s/coll-of ::coords-range :kind vector?))
 
 (defn sheet-merged-regions [^Sheet poi-sheet]
-  (mapv #(-> (.getMergedRegion poi-sheet %) .formatAsString parse-merged-region)
+  (mapv #(-> (.getMergedRegion poi-sheet %) .formatAsString xl.coords/parse-range)
         (range (.getNumMergedRegions poi-sheet))))
 
 (s/fdef find-merged-region
