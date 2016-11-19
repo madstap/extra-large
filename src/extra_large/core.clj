@@ -94,7 +94,7 @@
 
 (defn get-or-create-row!
   "Gets or creates the row in the sheet. Returns the poi-row.
-  row is one based, like excel."
+  row is one based."
   [^Sheet poi-sheet row]
   (or (get-row poi-sheet row)
       (.createRow poi-sheet (dec row))))
@@ -132,9 +132,9 @@
   Workbook
   (get-workbook [this] this)
   Sheet
-  (get-workbook [^Sheet this] (.getWorkbook this))
+  (get-workbook [this] (.getWorkbook this))
   Cell
-  (get-workbook [^Cell this] (.getWorkbook (.getSheet this))))
+  (get-workbook [this] (.getWorkbook (.getSheet this))))
 
 (defprotocol Writeable
   (write! [poi file-or-stream]
@@ -236,7 +236,7 @@
 
 (defmacro letsheets
   "Takes a workbook and a vector of sheet-names as symbols,
-  binds the workbook to wb and binds the supplied symbols
+  binds the symbol wb to the workbook and binds the supplied symbols
   to the sheets they name (throws an error if a sheet doesn't exist).
 
   (letsheets (xl/read-wb \"foo.xlsx\") [sales expenses profit]
@@ -425,12 +425,12 @@
   poi-wb)
 
 (defmethod update-poi! [:sheet :coords]
-  ^Sheet [poi-sheet coords f & args]
+  [poi-sheet coords f & args]
   (apply f (get-poi! poi-sheet coords) args)
   poi-sheet)
 
 (defmethod update-poi! [:sheet :range]
-  ^Sheet [poi-sheet coords-range f & args]
+  [poi-sheet coords-range f & args]
   (run! #(apply f % args) (get-poi! poi-sheet coords-range))
   poi-sheet)
 
@@ -452,7 +452,7 @@
   where merged is the coords-range to which coords belongs,
   and idx is it's index in the merged-regions of the sheet.
   Returns nil if not found."
-  [^Sheet poi-sheet coords]
+  [poi-sheet coords]
   (reduce (fn [_ [idx merged-region]]
             (when (contains? (set (apply xl.coords/range merged-region)) coords)
               (reduced [idx merged-region])))
