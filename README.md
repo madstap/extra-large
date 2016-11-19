@@ -50,6 +50,9 @@ Workbooks and sheets are the apache poi workbooks and sheets. They are mutable.
 
 ;; Create a sheet
 (def expenses (xl/create-sheet! wb "Expenses"))
+
+;; Get a sheet if it exists, if not create it. Only accepts a string.
+(def foo (xl/get-sheet! wb "foo"))
 ```
 
 #### Cells and coords
@@ -64,10 +67,28 @@ Workbooks and sheets are the apache poi workbooks and sheets. They are mutable.
 
 #### Doing stuff with cells
 
-All of these can take either the same two args as `xl/get-sheet` or a sheet as the first args.
+The main API consist functions that work with cells.
 
-`xl/assoc!`, `xl/update!`, `xl/update-val!` and `xl/update-poi!` will all return the workbook or sheet passed as the first argument.
+All of these functions have signatures that are like the following.
+```clojure
+;; Like xl/get-sheet, sheet-search can be a name, regex or a string.
+;; Will throw if there's no sheet found.
+([workbook sheet-search coords & maybe-more-args]
 
+;; Just a poi sheet.
+ [sheet coords & maybe-more-args])
+```
+
+Coords can be either coords `[:A 12]` or a range of coords `[[:A 1] [:B 5]]` (end inclusive).
+
+`xl/assoc!`, `xl/update!`, `xl/update-val!` and `xl/update-poi!` are mutating functions
+and will all return the workbook or sheet passed as the first argument,
+as well as mutating it, so you can use them with ->. Calling them with a range
+means that they'll be applied to each of the cells in the range in turn (by row).
+
+`xl/get`, `xl/get-val`, `xl/get-poi` and `xl/get-poi!` are getters and will return (a) cell(s).
+When given a range, there's a `:by` keyword argument that can be either `:row`(default) or `:col`.
+The cells are returned in a two dimensional vector.
 
 ##### Read cells
 
@@ -123,6 +144,20 @@ There are also more low-level functions to work directly with apache poi cells.
 
 ;; update-poi! will apply a function to the cell (will create the cell if it doesn't exist)
 (update-poi! sales [:F 4] (fn [c] (.removeCellcomment c)))
+```
+
+##### Calling the functions with ranges
+
+``` clojure
+;; To demonstrate I set the cell values to the string representation of their coords.
+(doseq [coords (xl.coords/range [:A 1] [:B 2])]
+  (xl/assoc! sales coords (xl.coords/unparse-coords coords)))
+
+(xl/get-val sales [[:A 1] [:B 2]] :by :row) ;=> [["A1" "B1"] ["A2" "B2"]]
+
+(xl/get-val sales [[:A 1] [:B 2]]) ;=> The same as above, default is by row.
+
+(xl/get-val sales [[:A 1] [:B 2]] :by :col) ;=> [["A1" "A2"] ["B1" "B2"]]
 
 ```
 
