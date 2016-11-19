@@ -290,3 +290,40 @@
     (case by
       :row (for [row rows, col cols] [col row])
       :col (for [col cols, row rows] [col row]))))
+
+(def coords-regex #"[A-Z]+[0-9]+")
+
+(def range-regex
+  (->> coords-regex (repeat 2) (map str) (interpose ":") (apply str) re-pattern))
+
+(s/def ::coords-str (s/and string? (partial re-find coords-regex)))
+
+(s/def ::range-str (s/and string? (partial re-find range-regex)))
+
+(s/fdef parse-coords
+  :args (s/cat :s ::coords-str)
+  :ret ::coords)
+
+(s/fdef parse-range
+  :args (s/cat :s ::range-str)
+  :ret ::coords-range)
+
+(s/fdef unparse-coords
+  :args (s/cat :coords ::coords)
+  :ret ::coords-str)
+
+(s/fdef unparse-range
+  :args (s/cat :range ::coords-range)
+  :ret ::range-str)
+
+(defn parse-coords [s]
+  (let [[col row] (rest (re-find #"([A-Z]+)([0-9]+)" s))]
+    [(keyword col) (Integer/parseInt row)]))
+
+(defn parse-range [s]
+  (mapv parse-coords (str/split s #":")))
+
+(defn unparse-coords [[col row]] (str (name col) row))
+
+(defn unparse-range [range]
+  (apply str (interpose ":" (map unparse-coords range))))

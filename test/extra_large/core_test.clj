@@ -8,6 +8,7 @@
             [clojure.test.check.properties :as prop]
             [extra-large.util :as util]
             [extra-large.core :as xl]
+            [extra-large.coords :as xl.coords]
             [extra-large.cell :as xl.cell]))
 
 (test/instrument)
@@ -40,8 +41,8 @@
 
     (testing "Overwrites former merged regions"
       (is (= [[:B 1] [:C 1]] (::xl.cell/merged (xl/get foo [:B 1]))))
-      (is (every? nil? (::xl.cell/merged [(xl/get foo [:A 1])
-                                          (xl/get foo [:C 1])]))))))
+      (is (every? nil? (map ::xl.cell/merged [(xl/get foo [:A 1])
+                                              (xl/get foo [:C 1])]))))))
 
 (deftest merged-cells-validation-test
   (xl/letsheets! (xl/new-wb) [foo]
@@ -74,3 +75,33 @@
              (xl/assoc! [:A 1] #::xl.cell{:formula "1 + 2"})
              (xl/get [:A 1]))))))
 
+(deftest calling-getters-with-a-range
+  (xl/letsheets! (xl/new-wb) [foo]
+    (let [c-range [[:A 1] [:B 2]]]
+
+      (doseq [x (apply xl.coords/range c-range)]
+        (xl/assoc! foo x (xl.coords/unparse-coords x)))
+
+      (testing "get"
+        (is (= [[#::xl.cell{:value "A1"} #::xl.cell{:value "B1"}]
+                [#::xl.cell{:value "A2"} #::xl.cell{:value "B2"}]]
+               (xl/get foo c-range)
+               (xl/get foo c-range :by :row)))
+
+        (is (= [[#::xl.cell{:value "A1"} #::xl.cell{:value "A2"}]
+                [#::xl.cell{:value "B1"} #::xl.cell{:value "B2"}]]
+               (xl/get foo c-range :by :col))))
+
+      (testing "get-val"
+        (is (= [["A1" "B1"]
+                ["A2" "B2"]]
+               (xl/get-val foo c-range)
+               (xl/get-val foo c-range :by :row)))
+
+        (is (= [["A1" "A2"]
+                ["B1" "B2"]]
+               (xl/get-val foo c-range :by :col))))
+
+      (testing "get-poi"
+        (is (= (xl/get-poi foo c-range)
+               (apply map vector (xl/get-poi foo c-range :by :col))))))))

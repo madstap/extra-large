@@ -6,7 +6,7 @@
    [dk.ative.docjure.spreadsheet :as doc]
    [extra-large.coords :as xl.coords]
    [extra-large.cell :as xl.cell]
-   [extra-large.util :as util :refer [definstance?]]
+   [extra-large.util :as util :refer [definstance? forv]]
    [clojure.set :as set]
    [clojure.string :as str]
    [clojure.spec.gen :as gen]
@@ -116,32 +116,37 @@
   (or (get-cell poi-row col)
       (.createCell poi-row (dec (xl.coords/col->int col)))))
 
-(defn read-wb
+(s/fdef read
+  :args (s/cat :file-or-stream any?)
+  :ret poi-wb?)
+
+(defn read
   "Reads a workbook from a stream or a file."
   [file-or-stream]
   (doc/load-workbook file-or-stream))
 
-(defn write-wb!
-  "Writes a workbook or sheet to a file or a stream.
-  If given a sheet, will use the parent workbook.
-  If it's a stream the caller must close the stream afterwards."
-  [poi file-or-stream]
-  (let [wb (cond (poi-wb? poi) poi
-                 (poi-sheet? poi) (.getWorkbook ^Sheet poi))]
-    (doc/save-workbook! file-or-stream wb)))
+(defprotocol HasWorkbook
+  (get-workbook [poi] "Gets the parent workbook of a poi object."))
 
-(defprotocol GetWorkbook
-  (get-workbook [poi]))
-
-(extend-protocol GetWorkbook
+(extend-protocol HasWorkbook
   Workbook
   (get-workbook [this] this)
-
   Sheet
   (get-workbook [^Sheet this] (.getWorkbook this))
-
   Cell
   (get-workbook [^Cell this] (.getWorkbook (.getSheet this))))
+
+(defprotocol Writeable
+  (write! [poi file-or-stream]
+    "Writes a workbook or sheet to a file or a stream.
+  If passed a sheet, will use the parent workbook.
+  If passed a stream the caller must close the stream afterwards."))
+
+(extend-protocol Writeable
+  Workbook
+  (write! [this file-or-stream] (doc/save-workbook! file-or-stream this))
+  Sheet
+  (write! [this file-or-stream] (write! (get-workbook this) file-or-stream)))
 
 (def docjure-errors
   #{:VALUE :DIV0 :CIRCULAR_REF :REF :NUM
@@ -212,7 +217,7 @@
   (or (get-sheet poi-wb sheet)
       (throw (IllegalArgumentException. "Sheet not found"))))
 
-(s/fdef letsheets!
+(s/fdef letsheets
   :args (s/cat :wb any?
                :sheet-names
                (s/and vector?
@@ -221,8 +226,28 @@
                                           #(s/valid? ::sheet-name (name %))))))
                :body (s/* any?)))
 
-(defn- sheet-binding [sheet-sym]
-  `[~sheet-sym (get-sheet! ~'wb ~(name sheet-sym))])
+(s/fdef letsheets!
+  :args (:args (s/get-spec `letsheets)))
+
+(defn- sheet-bindings [get-sheet-fn sheet-names]
+  (mapcat (fn [sheet-sym]
+            `[~sheet-sym (~get-sheet-fn ~'wb ~(name sheet-sym))])
+          sheet-names))
+
+(defmacro letsheets
+  "Takes a workbook and a vector of sheet-names as symbols,
+  binds the workbook to wb and binds the supplied symbols
+  to the sheets they name (throws an error if a sheet doesn't exist).
+
+  (letsheets (xl/read-wb \"foo.xlsx\") [sales expenses profit]
+    (xl/assoc! profit [:A 15] (- (apply + (xl/get-val sales [[:C 2] [:C 59]]))
+                                 (apply + (xl/get-val expenses [[:C 2] [:C 45]]))))
+    (xl/write! wb \"bar.xlsx\")))"
+  {:style/indent 2}
+  [wb sheet-names & body]
+  `(let [~'wb ~wb
+         ~@(sheet-bindings `get-sheet-safe sheet-names)]
+     ~@body))
 
 (defmacro letsheets!
   "Takes a workbook and a vector of sheet-names as symbols,
@@ -232,11 +257,11 @@
   (letsheets! (xl/read-wb \"foo.xlsx\") [sales expenses profit]
     (xl/assoc! profit [:A 15] (- (apply + (xl/get-val sales [[:C 2] [:C 59]]))
                                  (apply + (xl/get-val expenses [[:C 2] [:C 45]]))))
-    (xl/write-wb! wb \"bar.xlsx\")))"
+    (xl/write! wb \"bar.xlsx\")))"
   {:style/indent 2}
   [wb sheet-names & body]
   `(let [~'wb ~wb
-         ~@(mapcat sheet-binding sheet-names)]
+         ~@(sheet-bindings `get-sheet! sheet-names)]
      ~@body))
 
 (s/fdef cols-and-rows
@@ -249,7 +274,8 @@
 (defn cols-and-rows
   [coords-range]
   (let [[cols rows] (apply map vector coords-range)]
-    [(xl.coords/col-sort cols) (sort rows)]))
+    [(apply xl.coords/col-range (xl.coords/col-sort cols))
+     (apply xl.coords/row-range (sort rows))]))
 
 (s/def ::cell-or-val
   (s/or :val ::xl.cell/value
@@ -292,17 +318,20 @@
       :wb :wb
       :sheet [:sheet (first coords)])))
 
+(s/def :extra-large.core.getters/by #{:row :col})
+
 (s/fdef get-poi
   :args (s/cat :poi ::poi-args
-               :coords ::coords-args)
+               :coords ::coords-args
+               :opts (s/keys* :opt-un [:extra-large.core.getters/by]))
   :ret (s/nilable poi-cell?))
 
 (defmulti get-poi
   "Get the poi cell at coords, or nil if no cell found.
   If called with a range, will return a lazy sequence of cells,
   with nils where no cells found."
-  {:arglists '([poi-wb sheet coords cell-or-val]
-               [poi-sheet coords cell-or-val])}
+  {:arglists '([wb sheet-search coords cell-or-val & {:keys [by] :or {by :row}}]
+               [sheet coords cell-or-val & {:keys [by] :or {by :row}}])}
   cell-fn-dispatch)
 
 (defmethod get-poi :wb
@@ -315,27 +344,33 @@
     (get-cell poi-row col)))
 
 (defmethod get-poi [:sheet :range]
-  [poi-sheet coords-range]
+  [poi-sheet coords-range & {:keys [by] :or {by :row}}]
   (let [[cols rows] (cols-and-rows coords-range)]
 
-    (for [row (apply xl.coords/row-range rows)
-          :let [poi-row (get-row poi-sheet row)]
+    (if (= by :row)
+      (forv [row rows
+             :let [poi-row (get-row poi-sheet row)]]
+        (forv [col cols
+               :let [poi-cell (and poi-row (get-cell poi-row col))]]
+          poi-cell))
 
-          col (apply xl.coords/col-range cols)
-          :let [poi-cell (and poi-row (get-cell poi-row col))]]
-
-      poi-cell)))
+      (forv [col cols]
+        (forv [row rows
+               :let [poi-row (get-row poi-sheet row)
+                     poi-cell (and poi-row (get-cell poi-row col))]]
+          poi-cell)))))
 
 (s/fdef get-poi!
   :args (s/cat :poi ::poi-args
-               :coords ::coords-args)
+               :coords ::coords-args
+               :opts (s/keys* :opt-un [:extra-large.core.getters/by]))
   :ret poi-cell?)
 
 (defmulti get-poi!
   "Get the poi cell at coords, will create the cell if no cell found.
   If called with a range, will return an _eager_ sequence of cells."
-  {:arglists '([poi-wb sheet coords cell-or-val]
-               [poi-sheet coords cell-or-val])}
+  {:arglists '([poi-wb sheet coords & {:keys [by] :or {by :row}}]
+               [poi-sheet coords & {:keys [by] :or {by :row}}])}
   cell-fn-dispatch)
 
 (defmethod get-poi! :wb
@@ -349,16 +384,23 @@
     (get-or-create-cell! col)))
 
 (defmethod get-poi! [:sheet :range]
-  [poi-sheet coords-range]
+  [poi-sheet coords-range & {:keys [by] :or {by :row}}]
   (let [[cols rows] (cols-and-rows coords-range)]
-    ;; Should this be lazy?
-    (doall
-     (for [row (apply xl.coords/row-range rows)
-           :let [poi-row (get-or-create-row! poi-sheet row)]
 
-           col (apply xl.coords/col-range cols)
-           :let [poi-cell (get-or-create-cell! poi-row col)]]
-       poi-cell))))
+    ;; Should this be lazy?
+
+    (if (= by :row)
+      (forv [row rows
+             :let [poi-row (get-or-create-row! poi-sheet row)]]
+        (forv [col cols
+               :let [poi-cell (get-or-create-cell! poi-row col)]]
+          poi-cell))
+
+      (forv [col cols]
+        (forv [row rows
+               :let [poi-row (get-or-create-row! poi-sheet row)
+                     poi-cell (get-or-create-cell! poi-row col)]]
+          poi-cell)))))
 
 (s/fdef update-poi!
   :args (s/cat :poi ::poi-args
@@ -392,21 +434,12 @@
   (run! #(apply f % args) (get-poi! poi-sheet coords-range))
   poi-sheet)
 
-(s/fdef parse-merged-region
-  :args (s/cat :s string?)
-  :ret ::coords-range)
-
-(defn parse-merged-region [s]
-  (->> (str/split s #":")
-    (map #(rest (re-find #"([A-Z]*)([[0-9]*])" %)))
-    (mapv (juxt (comp keyword first) (comp util/str->int second)))))
-
 (s/fdef sheet-merged-regions
   :args (s/cat :sheet poi-sheet?)
   :ret (s/coll-of ::coords-range :kind vector?))
 
 (defn sheet-merged-regions [^Sheet poi-sheet]
-  (mapv #(-> (.getMergedRegion poi-sheet %) .formatAsString parse-merged-region)
+  (mapv #(-> (.getMergedRegion poi-sheet %) .formatAsString xl.coords/parse-range)
         (range (.getNumMergedRegions poi-sheet))))
 
 (s/fdef find-merged-region
@@ -433,7 +466,8 @@
 
 (s/fdef get
   :args (s/cat :poi ::poi-args
-               :coords ::coords-args)
+               :coords ::coords-args
+               :opts (s/keys* :opt-un [:extra-large.core.getters/by]))
   :ret ::cell
   :fn (fn [{:keys [args ret]}]
         (let [{::xl.cell/keys [merged merged-by]} ret
@@ -444,8 +478,8 @@
 
 (defmulti get
   "Get the cell at coords. If passed a range, returns a lazy seq of cells."
-  {:arglists '([poi-wb sheet coords]
-               [poi-sheet coords])}
+  {:arglists '([poi-wb sheet coords & {:keys [by] :or {by :row}}]
+               [poi-sheet coords & {:keys [by] :or {by :row}}])}
   cell-fn-dispatch)
 
 (defmethod get :wb
@@ -478,19 +512,29 @@
         merged (assoc merged-key merged)))))
 
 (defmethod get [:sheet :range]
-  [poi-sheet coords-range]
-  (map (partial get poi-sheet) (apply xl.coords/range coords-range)))
+  [poi-sheet coords-range & {:keys [by] :or {by :row}}]
+  (let [[cols rows] (cols-and-rows coords-range)]
+
+    (if (= by :row)
+      (forv [row rows]
+        (forv [col cols]
+          (get poi-sheet [col row])))
+
+      (forv [col cols]
+        (forv [row rows]
+          (get poi-sheet [col row]))))))
 
 (s/fdef get-val
   :args (s/cat :poi ::poi-args
-               :coords ::coords)
+               :coords ::coords-args
+               :opts (s/keys* :opt-un [:extra-large.core.getters/by]))
   :ret ::xl.cell/value)
 
 (defmulti get-val
   "Get the value at coords.
   Returns a lazy sequence when provided a range."
-  {:arglists '([poi-wb sheet coords]
-               [poi-sheet coords])}
+  {:arglists '([poi-wb sheet coords & {:keys [by] :or {by :row}}]
+               [poi-sheet coords & {:keys [by] :or {by :row}}])}
   cell-fn-dispatch)
 
 (defmethod get-val :wb
@@ -502,8 +546,16 @@
   (::xl.cell/value (get poi-sheet coords)))
 
 (defmethod get-val [:sheet :range]
-  [poi-sheet coords-range]
-  (map ::xl.cell/value (get poi-sheet coords-range)))
+  [poi-sheet coords-range & {:keys [by] :or {by :row}}]
+  (let [[cols rows] (cols-and-rows coords-range)]
+    (if (= by :row)
+      (forv [row rows]
+        (forv [col cols]
+          (get-val poi-sheet [col row])))
+
+      (forv [col cols]
+        (forv [row rows]
+          (get-val poi-sheet [col row]))))))
 
 (defmulti coerce-cell-val
   "Coerces a value to the representation used in excel.

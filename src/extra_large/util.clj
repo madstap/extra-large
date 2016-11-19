@@ -89,8 +89,14 @@
                :meta (s/? map?)
                :class any?))
 
-(defmacro definstance?
+(defmacro forv
   {:style/indent 1}
+  [seq-exprs expr]
+  `(vec (for ~seq-exprs ~expr)))
+
+(defmacro definstance?
+  {:style/indent 1
+   :arglists '([name docstring? attr-map? class])}
   ([& args]
    (let [{:keys [name-sym docstring meta class]}
          (s/conform (:args (s/get-spec `definstance?)) args)]
