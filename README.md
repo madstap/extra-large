@@ -36,11 +36,11 @@ In your namespace
 Workbooks and sheets are the apache poi workbooks and sheets. They are mutable.
 
 ```clojure
-;; Read from a file (or stream)
-(def wb (xl/read-wb "resources/foo.xlsx"))
+;; Read a workbook from a file (or stream)
+(def wb (xl/read "resources/foo.xlsx"))
 
-;; Write to a file.
-(xl/write-wb! wb "resources/bar.xlsx")
+;; Write a workbook to a file.
+(xl/write! wb "resources/bar.xlsx")
 
 ;; Get a sheet
 ;; The sheet arg can either be a sheet name, regex or an index (0-based)
