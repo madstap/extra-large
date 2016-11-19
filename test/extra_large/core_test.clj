@@ -18,7 +18,7 @@
   (prop/for-all [v (gen/such-that (complement inst?)
                      ;; TODO: How should dates work?
                      (s/gen ::xl.cell/non-error-value))
-                 coords (s/gen ::xl/coords)]
+                 coords (s/gen ::xl.coords/coords)]
     (xl/letsheets! (xl/new-wb) [foo]
       (xl/assoc! foo coords v)
       (= (xl/coerce-cell-val v) (xl/get-val foo coords)))))

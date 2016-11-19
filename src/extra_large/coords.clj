@@ -29,7 +29,7 @@
 
 (s/def ::coords (s/tuple ::col ::row))
 
-(s/def ::coords-range (s/tuple ::coords ::coords))
+(s/def ::range (s/tuple ::coords ::coords))
 
 (def ^:private alpha->int
   (zipmap alphabet (drop 1 (clojure.core/range))))
@@ -300,28 +300,28 @@
 
 (s/def ::range-str (s/and string? (partial re-find range-regex)))
 
-(s/fdef parse-coords
+(s/fdef parse
   :args (s/cat :s ::coords-str)
   :ret ::coords)
 
 (s/fdef parse-range
   :args (s/cat :s ::range-str)
-  :ret ::coords-range)
+  :ret ::range)
 
 (s/fdef unparse-coords
   :args (s/cat :coords ::coords)
   :ret ::coords-str)
 
 (s/fdef unparse-range
-  :args (s/cat :range ::coords-range)
+  :args (s/cat :range ::range)
   :ret ::range-str)
 
-(defn parse-coords [s]
+(defn parse [s]
   (let [[col row] (rest (re-find #"([A-Z]+)([0-9]+)" s))]
     [(keyword col) (Integer/parseInt row)]))
 
 (defn parse-range [s]
-  (mapv parse-coords (str/split s #":")))
+  (mapv parse (str/split s #":")))
 
 (defn unparse-coords [[col row]] (str (name col) row))
 
