@@ -37,5 +37,5 @@
 
 (s/def ::formula string?)
 
-(s/def ::merged ::xl.coords/coords-range)
-(s/def ::merged-by ::xl.coords/coords-range)
+(s/def ::merged ::xl.coords/range)
+(s/def ::merged-by ::xl.coords/range)
