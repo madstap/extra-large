@@ -28,18 +28,6 @@
 
 (definstance? regex? java.util.regex.Pattern)
 
-(defn valid-formula? [{::xl.cell/keys [formula value]}]
-  (let [[value-type _] (s/conform ::xl.cell/value value)]
-    ;; Can't have an error in a non formula cell...
-    (or (not= :error value-type) formula)))
-
-(s/def ::cell
-  (s/and valid-formula?
-         (s/keys :opt [::xl.cell/value
-                       ::xl.cell/formula
-                       ::xl.cell/merged
-                       ::xl.cell/merged-by])))
-
 (def errors {:circular-ref             FormulaError/CIRCULAR_REF
              :div0                     FormulaError/DIV0
              :function-not-implemented FormulaError/FUNCTION_NOT_IMPLEMENTED
@@ -275,7 +263,7 @@
 
 (s/def ::cell-or-val
   (s/or :val ::xl.cell/value
-        :cell ::cell))
+        :cell ::xl.cell/cell))
 
 (s/fdef force-formula-recalc!
   :args (s/cat :poi (s/or :wb poi-wb?
@@ -464,7 +452,7 @@
   :args (s/cat :poi ::poi-args
                :coords ::coords-args
                :opts (s/keys* :opt-un [:extra-large.core.getters/by]))
-  :ret ::cell
+  :ret ::xl.cell/cell
   :fn (fn [{:keys [args ret]}]
         (let [{::xl.cell/keys [merged merged-by]} ret
               {:keys [coords]} args]
