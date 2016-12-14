@@ -28,22 +28,6 @@
 
 (definstance? regex? java.util.regex.Pattern)
 
-(s/def ::coords ::xl.coords/coords)
-
-(s/def ::coords-range ::xl.coords/coords-range)
-
-(defn valid-formula? [{::xl.cell/keys [formula value]}]
-  (let [[value-type _] (s/conform ::xl.cell/value value)]
-    ;; Can't have an error in a non formula cell...
-    (or (not= :error value-type) formula)))
-
-(s/def ::cell
-  (s/and valid-formula?
-         (s/keys :opt [::xl.cell/value
-                       ::xl.cell/formula
-                       ::xl.cell/merged
-                       ::xl.cell/merged-by])))
-
 (def errors {:circular-ref             FormulaError/CIRCULAR_REF
              :div0                     FormulaError/DIV0
              :function-not-implemented FormulaError/FUNCTION_NOT_IMPLEMENTED
@@ -265,7 +249,7 @@
      ~@body))
 
 (s/fdef cols-and-rows
-  :args (s/cat :range ::coords-range)
+  :args (s/cat :range ::xl.coords/range)
   :ret (s/tuple (s/and (s/coll-of ::xl.coords/col)
                        (partial apply xl.coords/col<=))
                 (s/and (s/coll-of ::xl.coords/row)
@@ -279,7 +263,7 @@
 
 (s/def ::cell-or-val
   (s/or :val ::xl.cell/value
-        :cell ::cell))
+        :cell ::xl.cell/cell))
 
 (s/fdef force-formula-recalc!
   :args (s/cat :poi (s/or :wb poi-wb?
@@ -300,8 +284,8 @@
          :sheet poi-sheet?))
 
 (s/def ::coords-args
-  (s/or :coords ::coords
-        :range ::coords-range))
+  (s/or :coords ::xl.coords/coords
+        :range ::xl.coords/range))
 
 (s/def ::poi-and-coords-args
   (s/cat :poi ::poi-args
@@ -436,7 +420,7 @@
 
 (s/fdef sheet-merged-regions
   :args (s/cat :sheet poi-sheet?)
-  :ret (s/coll-of ::coords-range :kind vector?))
+  :ret (s/coll-of ::xl.coords/range :kind vector?))
 
 (defn sheet-merged-regions [^Sheet poi-sheet]
   (mapv #(-> (.getMergedRegion poi-sheet %) .formatAsString xl.coords/parse-range)
@@ -444,8 +428,8 @@
 
 (s/fdef find-merged-region
   :args (s/cat :sheet poi-sheet?
-               :coords ::coords)
-  :ret (s/nilable (s/spec (s/cat :idx nat-int? :region ::coords-range))))
+               :coords ::xl.coords/coords)
+  :ret (s/nilable (s/spec (s/cat :idx nat-int? :region ::xl.coords/range))))
 
 (defn find-merged-region
   "Returns a tuple of [idx merged],
@@ -468,7 +452,7 @@
   :args (s/cat :poi ::poi-args
                :coords ::coords-args
                :opts (s/keys* :opt-un [:extra-large.core.getters/by]))
-  :ret ::cell
+  :ret ::xl.cell/cell
   :fn (fn [{:keys [args ret]}]
         (let [{::xl.cell/keys [merged merged-by]} ret
               {:keys [coords]} args]
@@ -488,7 +472,7 @@
 
 (defmethod get [:sheet :coords]
   [^Sheet poi-sheet coords]
-  (when-let [poi-cell (get-poi! poi-sheet coords)]
+  (when-let [poi-cell (get-poi poi-sheet coords)]
     (let [formula (try (.getCellFormula ^Cell poi-cell)
                        ;; Throws exeption when the cell is not a formula cell
                        (catch java.lang.IllegalStateException _ nil))

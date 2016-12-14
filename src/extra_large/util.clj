@@ -75,8 +75,9 @@
 
 (defmacro cond-doto
   "Takes a presumably mutable x and zero or more clauses.
-  A clause is a test expr, which will be evaluated and checked for truthyness,
-  and an expression which "
+  A clause is a test and an expression, the test is evaluated and if it's truthy,
+  the expression is evaluated with x as the first argument, like doto.
+  Returns x"
   {:style/indent 1}
   ([x] x)
   ([x & clauses]

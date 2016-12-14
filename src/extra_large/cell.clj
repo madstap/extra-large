@@ -37,5 +37,17 @@
 
 (s/def ::formula string?)
 
-(s/def ::merged ::xl.coords/coords-range)
-(s/def ::merged-by ::xl.coords/coords-range)
+(s/def ::merged ::xl.coords/range)
+(s/def ::merged-by ::xl.coords/range)
+
+(defn valid-formula? [{::keys [formula value]}]
+  (let [[value-type _] (s/conform ::value value)]
+    ;; Can't have an error in a non formula cell...
+    (or (not= :error value-type) formula)))
+
+(s/def ::cell
+  (s/and valid-formula?
+         (s/keys :opt [::value
+                       ::formula
+                       ::merged
+                       ::merged-by])))
