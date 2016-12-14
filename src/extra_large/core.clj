@@ -472,7 +472,7 @@
 
 (defmethod get [:sheet :coords]
   [^Sheet poi-sheet coords]
-  (when-let [poi-cell (get-poi! poi-sheet coords)]
+  (when-let [poi-cell (get-poi poi-sheet coords)]
     (let [formula (try (.getCellFormula ^Cell poi-cell)
                        ;; Throws exeption when the cell is not a formula cell
                        (catch java.lang.IllegalStateException _ nil))
